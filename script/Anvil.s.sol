@@ -52,7 +52,7 @@ contract CounterScript is Script, DeployPermit2 {
         // Deploy the hook using CREATE2 //
         // ----------------------------- //
         vm.broadcast();
-        AgneticHook hook = new AgneticHook{salt: salt}(manager, address(0), address(0));
+        AgneticHook hook = new AgneticHook{salt: salt}(manager, address(0), address(0), address(0));
         require(address(hook) == hookAddress, "CounterScript: hook address mismatch");
 
         // Additional helpers for interacting with the pool

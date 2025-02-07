@@ -15,20 +15,24 @@ contract CounterScript is Script, Constants {
 
     function run() public {
         // hook contracts must have specific flags encoded in the address
-        uint160 flags = uint160(
-            Hooks.BEFORE_SWAP_FLAG | Hooks.AFTER_SWAP_FLAG | Hooks.BEFORE_ADD_LIQUIDITY_FLAG
-                | Hooks.BEFORE_REMOVE_LIQUIDITY_FLAG
-        );
+        uint160 flags = uint160(Hooks.BEFORE_INITIALIZE_FLAG | Hooks.BEFORE_SWAP_FLAG);
+        // uint160 flags = uint160(
+        //     Hooks.BEFORE_SWAP_FLAG | Hooks.AFTER_SWAP_FLAG | Hooks.BEFORE_ADD_LIQUIDITY_FLAG
+        //         | Hooks.BEFORE_REMOVE_LIQUIDITY_FLAG
+        // );
+        // address flags = address(
+        //     uint160(Hooks.BEFORE_INITIALIZE_FLAG | Hooks.BEFORE_SWAP_FLAG) ^ (0x4444 << 144) // Namespace the hook to avoid collisions
+        // );
 
         // Mine a salt that will produce a hook address with the correct flags
-        bytes memory constructorArgs = abi.encode(POOLMANAGER);
+        bytes memory constructorArgs = abi.encode(POOLMANAGER, address(0), address(0), address(0));
+
         (address hookAddress, bytes32 salt) =
             HookMiner.find(CREATE2_DEPLOYER, flags, type(AgneticHook).creationCode, constructorArgs);
 
         // Deploy the hook using CREATE2
         vm.broadcast();
-        address temp0 = address(0);
-        AgneticHook hook = new AgneticHook{salt: salt}(IPoolManager(POOLMANAGER), temp0, temp0);
+        AgneticHook hook = new AgneticHook{salt: salt}(IPoolManager(POOLMANAGER), address(0), address(0), address(0));
         require(address(hook) == hookAddress, "CounterScript: hook address mismatch");
     }
 }
