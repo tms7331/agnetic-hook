@@ -37,6 +37,7 @@ contract AgneticTokenFactory {
     function deployAndApprove(string memory name, string memory symbol) internal returns (address) {
         uint256 initialSupply = 1_000_000_000;
         AgneticToken newToken = new AgneticToken(name, symbol, initialSupply);
+
         // approve permit2 as a spender
         newToken.approve(address(permit2), type(uint256).max);
         // approve `PositionManager` as a spender
