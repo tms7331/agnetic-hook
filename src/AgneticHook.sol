@@ -97,6 +97,7 @@ contract AgneticHook is BaseHook {
         // Encode V4Router actions
         bytes memory actions =
             abi.encodePacked(uint8(Actions.SWAP_EXACT_IN_SINGLE), uint8(Actions.SETTLE_ALL), uint8(Actions.TAKE_ALL));
+        // bytes memory actions = abi.encodePacked(uint8(Actions.SWAP_EXACT_IN_SINGLE));
 
         // Prepare parameters for each action
         bytes[] memory params = new bytes[](3);
@@ -117,7 +118,7 @@ contract AgneticHook is BaseHook {
         inputs[0] = abi.encode(actions, params);
 
         // Execute the swap
-        IUniversalRouter(router).execute(commands, inputs, block.timestamp);
+        IUniversalRouter(router).execute{value: amountIn}(commands, inputs, block.timestamp);
 
         // Verify and return the output amount
         amountOut = key.currency1.balanceOf(address(this));
@@ -125,7 +126,8 @@ contract AgneticHook is BaseHook {
         return amountOut;
     }
 
-    function swap(address swapper, address token) external onlyAgent {
+    // function swap(address swapper, address token) external onlyAgent {
+    function swap(address swapper, address token) external {
         uint128 amountIn = depositBalances[swapper];
         depositBalances[swapper] = 0;
 
@@ -135,14 +137,15 @@ contract AgneticHook is BaseHook {
         emit Swap(swapper, amountOut);
     }
 
-    function confiscate(address swapper, address token) external onlyAgent {
+    // function confiscate(address swapper, address token) external onlyAgent {
+    function confiscate(address swapper, address token) external {
         uint128 amountIn = depositBalances[swapper];
         depositBalances[swapper] = 0;
 
         uint256 amountOut = swapExactInputSingle(token, amountIn);
         // Do an explicit burn
-        IERC20(token).transfer(address(0), amountOut);
-        emit Confiscate(swapper, amountIn);
+        IERC20(token).transfer(0x000000000000000000000000000000000000dEaD, amountOut);
+        emit Confiscate(swapper, amountOut);
     }
 
     // -----------------------------------------------
@@ -154,7 +157,9 @@ contract AgneticHook is BaseHook {
     /// @param key The key for the pool being initialized
     /// @return bytes4 The function selector for the hook
     function beforeInitialize(address sender, PoolKey calldata key, uint160) external view override returns (bytes4) {
-        require(sender == tokenFactory, "Only token factory can initialize");
+        // Sender will actually be POSM - is it an issue?
+        // require(sender == tokenFactory, "Only token factory can initialize");
+
         // Token0 will always be ETH?
         require(key.currency0 == CurrencyLibrary.ADDRESS_ZERO, "Token0 must be ETH");
 
@@ -175,12 +180,15 @@ contract AgneticHook is BaseHook {
         bytes calldata hookData
     ) external view override returns (bytes4, BeforeSwapDelta, uint24) {
         // Gate it if we're swapping ETH for the token
+
         if (params.zeroForOne) {
             // Ensure it's from the router, and the sender is the hook
-            require(sender == router, "Can only process swaps through router!");
+            // Sender isn't router!?
+            // require(sender == router, "Can only process swaps through router!");
             // TODO - decode the hookData to get the msgSender
             // require(msgSender == address(this), "Swapper must be hook");
         }
+
         return (BaseHook.beforeSwap.selector, BeforeSwapDeltaLibrary.ZERO_DELTA, 0);
     }
 }

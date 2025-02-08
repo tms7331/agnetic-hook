@@ -70,10 +70,12 @@ contract AgneticTokenFactory {
         bytes memory actions = abi.encodePacked(uint8(Actions.MINT_POSITION), uint8(Actions.SETTLE_PAIR));
         bytes[] memory mintParams = new bytes[](2);
 
-        int24 tickLower = 0;
-        int24 tickUpper = 887200;
-        int256 liquidity = 1000;
-        uint256 amount0Max = type(uint256).max;
+        // Half range stake
+        int24 tickLower = -887200;
+        int24 tickUpper = 0;
+        // Had to calculate this manually, uses approximately the full supply of the token
+        int256 liquidity = 1000000000000000000000000000;
+        uint256 amount0Max = 0;
         uint256 amount1Max = type(uint256).max;
         address recipient = address(this);
         bytes memory hookData = abi.encode(hook);
