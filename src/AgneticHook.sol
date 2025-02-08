@@ -66,14 +66,14 @@ contract AgneticHook is BaseHook {
         });
     }
 
-    function deposit() public payable {
+    function deposit() external payable {
         require(msg.value > 0, "Must send some ETH");
         // No chance they ever send more than 2^128 - 1, so this should be safe
         depositBalances[msg.sender] += uint128(msg.value);
         emit Deposit(msg.sender, msg.value);
     }
 
-    function check_deposit(address swapper) public view returns (bool) {
+    function check_deposit(address swapper) external view returns (bool) {
         return depositBalances[swapper] > 0;
     }
 
@@ -101,6 +101,7 @@ contract AgneticHook is BaseHook {
 
         // Prepare parameters for each action
         bytes[] memory params = new bytes[](3);
+        bytes memory hookData = abi.encode(address(this));
         params[0] = abi.encode(
             IV4Router.ExactInputSingleParams({
                 poolKey: key,
@@ -108,7 +109,7 @@ contract AgneticHook is BaseHook {
                 zeroForOne: true,
                 amountIn: amountIn,
                 amountOutMinimum: minAmountOut,
-                hookData: bytes("")
+                hookData: hookData
             })
         );
         params[1] = abi.encode(key.currency0, amountIn);
@@ -122,12 +123,10 @@ contract AgneticHook is BaseHook {
 
         // Verify and return the output amount
         amountOut = key.currency1.balanceOf(address(this));
-        require(amountOut >= minAmountOut, "Insufficient output amount");
         return amountOut;
     }
 
-    // function swap(address swapper, address token) external onlyAgent {
-    function swap(address swapper, address token) external {
+    function swap(address swapper, address token) external onlyAgent {
         uint128 amountIn = depositBalances[swapper];
         depositBalances[swapper] = 0;
 
@@ -137,8 +136,7 @@ contract AgneticHook is BaseHook {
         emit Swap(swapper, amountOut);
     }
 
-    // function confiscate(address swapper, address token) external onlyAgent {
-    function confiscate(address swapper, address token) external {
+    function confiscate(address swapper, address token) external onlyAgent {
         uint128 amountIn = depositBalances[swapper];
         depositBalances[swapper] = 0;
 
@@ -153,10 +151,9 @@ contract AgneticHook is BaseHook {
     // -----------------------------------------------
 
     /// @notice The hook called before the state of a pool is initialized
-    /// @param sender The initial msg.sender for the initialize call
     /// @param key The key for the pool being initialized
     /// @return bytes4 The function selector for the hook
-    function beforeInitialize(address sender, PoolKey calldata key, uint160) external view override returns (bytes4) {
+    function beforeInitialize(address, PoolKey calldata key, uint160) external pure override returns (bytes4) {
         // Sender will actually be POSM - is it an issue?
         // require(sender == tokenFactory, "Only token factory can initialize");
 
@@ -180,13 +177,12 @@ contract AgneticHook is BaseHook {
         bytes calldata hookData
     ) external view override returns (bytes4, BeforeSwapDelta, uint24) {
         // Gate it if we're swapping ETH for the token
-
         if (params.zeroForOne) {
             // Ensure it's from the router, and the sender is the hook
-            // Sender isn't router!?
-            // require(sender == router, "Can only process swaps through router!");
-            // TODO - decode the hookData to get the msgSender
-            // require(msgSender == address(this), "Swapper must be hook");
+            require(sender == router, "Can only process swaps through router!");
+            // TODO - switch to running our own router, this could be faked
+            address msgSender = abi.decode(hookData, (address));
+            require(msgSender == address(this), "Swapper must be hook");
         }
 
         return (BaseHook.beforeSwap.selector, BeforeSwapDeltaLibrary.ZERO_DELTA, 0);
