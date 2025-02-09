@@ -8,6 +8,7 @@ import {AgneticTokenFactory} from "../src/AgneticTokenFactory.sol";
 import {Constants} from "./base/Constants.sol";
 import {AgneticHook} from "../src/AgneticHook.sol";
 import {HookMiner} from "../test/utils/HookMiner.sol";
+import {ISignatureTransfer} from "../src/libraries/SettleWithPermit2.sol";
 
 /// @notice Mines the address and deploys the Hook contract and the TokenFactory
 contract DeployAll is Script {
@@ -36,7 +37,8 @@ contract DeployAll is Script {
         vm.stopBroadcast();
 
         // Mine a salt that will produce a hook address with the correct flags
-        bytes memory constructorArgs = abi.encode(IPoolManager(POOLMANAGER), AGENT, address(factory), UNIVERSALROUTER);
+        bytes memory constructorArgs =
+            abi.encode(IPoolManager(POOLMANAGER), ISignatureTransfer(PERMIT2), AGENT, address(factory), UNIVERSALROUTER);
 
         (address hookAddress, bytes32 salt) =
             HookMiner.find(CREATE2_DEPLOYER, flags, type(AgneticHook).creationCode, constructorArgs);
@@ -45,8 +47,9 @@ contract DeployAll is Script {
         // Deploy the hook using CREATE2
         vm.startBroadcast();
 
-        AgneticHook hook =
-            new AgneticHook{salt: salt}(IPoolManager(POOLMANAGER), AGENT, address(factory), UNIVERSALROUTER);
+        AgneticHook hook = new AgneticHook{salt: salt}(
+            IPoolManager(POOLMANAGER), ISignatureTransfer(PERMIT2), AGENT, address(factory), UNIVERSALROUTER
+        );
         require(address(hook) == hookAddress, "DeployAll: hook address mismatch");
 
         factory.setHook(hookAddress);

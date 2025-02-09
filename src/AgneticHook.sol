@@ -12,12 +12,12 @@ import {BalanceDelta} from "@uniswap/v4-core/src/types/BalanceDelta.sol";
 import {IPoolManager} from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
 import {BeforeSwapDelta, BeforeSwapDeltaLibrary} from "@uniswap/v4-core/src/types/BeforeSwapDelta.sol";
 import {Currency, CurrencyLibrary} from "@uniswap/v4-core/src/types/Currency.sol";
-import {BaseHook} from "@uniswap/v4-periphery/src/base/hooks/BaseHook.sol";
+import {BaseHookRouter, BaseData} from "./BaseHookRouter.sol";
 import {Actions} from "@uniswap/v4-periphery/src/libraries/Actions.sol";
 import {IV4Router} from "@uniswap/v4-periphery/src/interfaces/IV4Router.sol";
-import {IUniversalRouter} from "./IUniversalRouter.sol";
+import {ISignatureTransfer} from "./libraries/SettleWithPermit2.sol";
 
-contract AgneticHook is BaseHook {
+contract AgneticHook is BaseHookRouter {
     using PoolIdLibrary for PoolKey;
 
     // NOTE: ---------------------------------------------------------
@@ -36,12 +36,14 @@ contract AgneticHook is BaseHook {
     }
 
     event Deposit(address indexed sender, uint256 amount);
-    event Swap(address indexed sender, uint256 amount);
-    event Confiscate(address indexed sender, uint256 amount);
 
-    constructor(IPoolManager _poolManager, address _agent, address _tokenFactory, address _router)
-        BaseHook(_poolManager)
-    {
+    constructor(
+        IPoolManager _poolManager,
+        ISignatureTransfer _permit2,
+        address _agent,
+        address _tokenFactory,
+        address _router
+    ) BaseHookRouter(_poolManager, _permit2) {
         agent = _agent;
         tokenFactory = _tokenFactory;
         router = _router;
@@ -77,73 +79,18 @@ contract AgneticHook is BaseHook {
         return depositBalances[swapper] > 0;
     }
 
-    function swapExactInputSingle(address token, uint128 amountIn) internal returns (uint256 amountOut) {
-        PoolKey memory key = PoolKey({
-            // native token
-            currency0: CurrencyLibrary.ADDRESS_ZERO,
-            currency1: Currency.wrap(token),
-            fee: 10000,
-            tickSpacing: 200,
-            hooks: IHooks(address(this))
-        });
-        uint128 minAmountOut = 0;
-
-        // Following https://docs.uniswap.org/contracts/v4/quickstart/swap#32-encoding-the-swap-command
-
-        // V4_SWAP = 0x10, from: https://github.com/Uniswap/universal-router/blob/main/contracts/libraries/Commands.sol
-        bytes memory commands = abi.encodePacked(uint8(0x10));
-        bytes[] memory inputs = new bytes[](1);
-
-        // Encode V4Router actions
-        bytes memory actions =
-            abi.encodePacked(uint8(Actions.SWAP_EXACT_IN_SINGLE), uint8(Actions.SETTLE_ALL), uint8(Actions.TAKE_ALL));
-        // bytes memory actions = abi.encodePacked(uint8(Actions.SWAP_EXACT_IN_SINGLE));
-
-        // Prepare parameters for each action
-        bytes[] memory params = new bytes[](3);
-        bytes memory hookData = abi.encode(address(this));
-        params[0] = abi.encode(
-            IV4Router.ExactInputSingleParams({
-                poolKey: key,
-                // zero will always be ETH so we can hardcode this?
-                zeroForOne: true,
-                amountIn: amountIn,
-                amountOutMinimum: minAmountOut,
-                hookData: hookData
-            })
-        );
-        params[1] = abi.encode(key.currency0, amountIn);
-        params[2] = abi.encode(key.currency1, minAmountOut);
-
-        // Combine actions and params into inputs
-        inputs[0] = abi.encode(actions, params);
-
-        // Execute the swap
-        IUniversalRouter(router).execute{value: amountIn}(commands, inputs, block.timestamp);
-
-        // Verify and return the output amount
-        amountOut = key.currency1.balanceOf(address(this));
-        return amountOut;
-    }
-
     function swap(address swapper, address token) external onlyAgent {
         uint128 amountIn = depositBalances[swapper];
         depositBalances[swapper] = 0;
-
-        uint256 amountOut = swapExactInputSingle(token, amountIn);
-        // We swapped on behalf of the user - send them their tokens
-        IERC20(token).transfer(swapper, amountOut);
-        emit Swap(swapper, amountOut);
+        _handle_swap(token, amountIn, swapper);
     }
 
     function confiscate(address swapper, address token) external onlyAgent {
         uint128 amountIn = depositBalances[swapper];
         depositBalances[swapper] = 0;
-
-        uint256 amountOut = swapExactInputSingle(token, amountIn);
-        // Do an explicit burn
-        IERC20(token).transfer(0x000000000000000000000000000000000000dEaD, amountOut);
-        emit Confiscate(swapper, amountOut);
+        address burnAddr = 0x000000000000000000000000000000000000dEaD;
+        // Will swap and burn tokens!
+        _handle_swap(token, amountIn, burnAddr);
     }
 
     // -----------------------------------------------
@@ -160,31 +107,59 @@ contract AgneticHook is BaseHook {
         // Token0 will always be ETH?
         require(key.currency0 == CurrencyLibrary.ADDRESS_ZERO, "Token0 must be ETH");
 
-        return BaseHook.beforeInitialize.selector;
+        return BaseHookRouter.beforeInitialize.selector;
     }
 
     /// @notice The hook called before a swap
     /// @param sender The initial msg.sender for the swap call
     /// @param params The parameters for the swap
-    /// @param hookData Arbitrary data handed into the PoolManager by the swapper to be be passed on to the hook
     /// @return bytes4 The function selector for the hook
     /// @return BeforeSwapDelta The hook's delta in specified and unspecified currencies. Positive: the hook is owed/took currency, negative: the hook owes/sent currency
     /// @return uint24 Optionally override the lp fee, only used if three conditions are met: 1. the Pool has a dynamic fee, 2. the value's 2nd highest bit is set (23rd bit, 0x400000), and 3. the value is less than or equal to the maximum fee (1 million)
-    function beforeSwap(
-        address sender,
-        PoolKey calldata,
-        IPoolManager.SwapParams calldata params,
-        bytes calldata hookData
-    ) external view override returns (bytes4, BeforeSwapDelta, uint24) {
+    function beforeSwap(address sender, PoolKey calldata, IPoolManager.SwapParams calldata params, bytes calldata)
+        external
+        view
+        override
+        returns (bytes4, BeforeSwapDelta, uint24)
+    {
         // Gate it if we're swapping ETH for the token
         if (params.zeroForOne) {
-            // Ensure it's from the router, and the sender is the hook
-            require(sender == router, "Can only process swaps through router!");
-            // TODO - switch to running our own router, this could be faked
-            address msgSender = abi.decode(hookData, (address));
-            require(msgSender == address(this), "Swapper must be hook");
+            require(sender == address(this), "Can only process buys initiated through hook");
         }
 
-        return (BaseHook.beforeSwap.selector, BeforeSwapDeltaLibrary.ZERO_DELTA, 0);
+        return (BaseHookRouter.beforeSwap.selector, BeforeSwapDeltaLibrary.ZERO_DELTA, 0);
+    }
+
+    function _handle_swap(address token, uint128 amountIn, address recipient) internal {
+        uint256 amountOutMin = 0;
+        bool zeroForOne = true;
+        PoolKey memory key = PoolKey({
+            // native token
+            currency0: CurrencyLibrary.ADDRESS_ZERO,
+            currency1: Currency.wrap(token),
+            fee: 10000,
+            tickSpacing: 200,
+            hooks: IHooks(address(this))
+        });
+
+        bytes memory hookData;
+        _unlockAndDecode(
+            abi.encode(
+                BaseData({
+                    amount: uint256(amountIn),
+                    amountLimit: amountOutMin,
+                    payer: address(this),
+                    receiver: recipient,
+                    singleSwap: true,
+                    exactOutput: false,
+                    input6909: false,
+                    output6909: false,
+                    permit2: false
+                }),
+                zeroForOne,
+                key,
+                hookData
+            )
+        );
     }
 }

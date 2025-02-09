@@ -16,8 +16,8 @@ import {Currency, CurrencyLibrary} from "@uniswap/v4-core/src/types/Currency.sol
 
 contract HookCalls is Script {
     // Need to run 00_DeployAll.s.sol first, and get these addresses
-    address constant token = 0x934d405cE5Ef22558866f60EE2c88a594606e2ea;
-    address constant hook = 0xfA2Ce1D9b9d7F6b077922bFCedDd9100c0626080;
+    address constant token = 0x59646e90E5A703f23f73312207b416A038E2C176;
+    address payable constant hook = payable(0x32Ad6efd93D32dcDf0Ffd2Fc09a271C234642080);
 
     function run() external {
         vm.startBroadcast();
